@@ -29,7 +29,6 @@ setting = {
 
 
 sys.path.insert(0, "/var/www/projects/mage2_connector")
-# sys.path.insert(0, "C:/Users/Bibo W/GitHub/silvaengine/mage2_connector")
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger()
