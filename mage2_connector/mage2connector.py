@@ -502,6 +502,16 @@ class Mage2Connector(object):
         AND order_id = '{order_id}'
     """
 
+    UPDATECATALOGINVENTORYSTOCKITEM = """
+        UPDATE cataloginventory_stock_item
+        SET min_sale_qty = %s,
+        use_config_min_sale_qty = 0,
+        qty_increments = %s,
+        use_config_qty_increments = 0
+        WHERE website_id = %s
+        AND product_id = %s
+    """
+
     def __init__(self, logger, **setting):
         self.logger = logger
         self.setting = setting
@@ -728,9 +738,15 @@ class Mage2Connector(object):
     ):
         do_not_update_option_attributes = ["status", "visibility", "tax_class_id"]
         for attribute_code, value in data.items():
-            (data_type, attribute_metadata) = self.get_attribute_metadata(
-                attribute_code, entity_type_code
-            )
+            try:
+                (data_type, attribute_metadata) = self.get_attribute_metadata(
+                    attribute_code, entity_type_code
+                )
+            except Exception:
+                log = traceback.format_exc()
+                self.logger.exception(log)
+                continue
+
             if (
                 attribute_metadata["frontend_input"] == "select"
                 and attribute_code not in do_not_update_option_attributes
@@ -792,7 +808,7 @@ class Mage2Connector(object):
             website_id = res["website_id"]
         return website_id
 
-    def assing_website(self, product_id, store_id):
+    def assign_website(self, product_id, store_id):
         website_id = self.get_website_id_by_store_id(store_id)
         if website_id == 0:
             website_id = 1
@@ -811,15 +827,35 @@ class Mage2Connector(object):
                 )
             else:
                 self.update_catalog_product_entity(product_id, attribute_set, type_id)
+
+            # update catalog_inventory_stock_item.
+            self.update_catalog_inventory_stock_item(sku, data, store_id)
+
+            # insert update attributes.
             self.insert_update_entity_data(
                 product_id, data, entity_type_code="catalog_product", store_id=store_id
             )
-            self.assing_website(product_id, store_id)
+
+            self.assign_website(product_id, store_id)
             self.adaptor.commit()
             return product_id
         except Exception:
             self.adaptor.rollback()
             raise
+
+    def update_catalog_inventory_stock_item(self, sku, data, store_id):
+        website_id = self.get_website_id_by_store_id(store_id)
+        product_id = self.get_product_id_by_sku(sku)
+
+        self.adaptor.mysql_cursor.execute(
+            self.UPDATECATALOGINVENTORYSTOCKITEM,
+            [
+                data.get("min_sale_qty", 1),
+                data.get("qty_increments", 1),
+                website_id,
+                product_id,
+            ],
+        )
 
     def insert_update_custom_option(self, product_id, option):
         title = option.pop("title")
@@ -1045,6 +1081,121 @@ class Mage2Connector(object):
                 )
         return variants
 
+    ## Insert Update Variant.
+    def insert_update_variant(self, sku, data, store_id):
+        # Validate the child product.
+        # data = {
+        #     "variant_visibility": True,
+        #     "parent_product_sku": "xxxxx",
+        #     "variant_attributes": {"att_a": "abc", "att_x": "xyz"},
+        # }
+        parent_product_id = self.get_product_id_by_sku(data["parent_product_sku"])
+
+        attributes = []
+        for attribute_code, value in data["variant_attributes"].items():
+            (data_type, attribute_metadata) = self.get_attribute_metadata(
+                attribute_code, "catalog_product"
+            )
+            # Check if the attribute is a "SELECT".
+            assert (
+                attribute_metadata["frontend_input"] == "select"
+            ), "The attribute({attribute_code}) is not a 'SELECT' type.".format(
+                attribute_code=attribute_code
+            )
+            # Check if the product has the attribute with the option value.
+            option_id = self.get_option_id(
+                attribute_metadata["attribute_id"],
+                value,
+                admin_store_id=store_id,
+            )
+            if option_id is None:
+                options = {0: value}
+                self.set_attribute_option_values(
+                    attribute_metadata["attribute_id"],
+                    options,
+                    admin_store_id=store_id,
+                )
+            attributes.append(
+                {
+                    "attribute_code": attribute_code,
+                    "value": value,
+                    "attribute_id": attribute_metadata["attribute_id"],
+                }
+            )
+
+            attribute_ids = [attribute["attribute_id"] for attribute in attributes]
+
+            # Check if there is a product with the same attributes.
+            variants = list(
+                filter(
+                    lambda product: product["attributes"]
+                    == dict(
+                        (attribute["attribute_id"], attribute["value"])
+                        for attribute in attributes
+                    ),
+                    self.get_variants(
+                        parent_product_id,
+                        attribute_ids,
+                        admin_store_id=store_id,
+                    ),
+                )
+            )
+            # If there is a product matched with the attribute and value set and the sku is not matched,
+            # raise an exception.
+            if len(variants) != 0:
+                assert (
+                    variants[0]["sku"] == sku
+                ), "There is already a product ({sku}) matched with the attributes ({attributes}) of the sku ({variant_sku}).".format(
+                    sku=variants[0]["sku"],
+                    attributes=",".join(
+                        [
+                            f"{attribute['attribute_code']}:{attribute['value']}"
+                            for attribute in attributes
+                        ]
+                    ),
+                    variant_sku=sku,
+                )
+
+        # Insert or update the child product.
+        self.logger.info(f"Insert/Update the item ({sku}.")
+        for attribute_id in attribute_ids:
+            self.adaptor.mysql_cursor.execute(
+                self.REPLACECATALOGPRODUCTSUPERATTRIBUTESQL.format(
+                    product_id=parent_product_id, attribute_id=attribute_id
+                )
+            )
+
+        product_id = self.get_product_id_by_sku(sku)
+        if self.setting["VERSION"] == "EE" and product_id != 0:
+            product_id = self.get_row_id_by_entity_id(product_id)
+        self.adaptor.mysql_cursor.execute(
+            self.REPLACECATALOGPRODUCTRELATIONSQL.format(
+                parent_id=parent_product_id, child_id=product_id
+            )
+        )
+        self.adaptor.mysql_cursor.execute(
+            self.REPLACECATALOGPRODUCTSUPERLINKSQL.format(
+                product_id=product_id, parent_id=parent_product_id
+            )
+        )
+        self.adaptor.mysql_cursor.execute(
+            self.UPDATEPRODUCTVISIBILITYSQL.format(
+                id="row_id" if self.setting["VERSION"] == "EE" else "entity_id",
+                value=4 if data.get("variant_visibility", False) else 1,
+                product_id=product_id,
+            )
+        )
+
+        # Visibility for the parent product.
+        self.adaptor.mysql_cursor.execute(
+            self.UPDATEPRODUCTVISIBILITYSQL.format(
+                id="row_id" if self.setting["VERSION"] == "EE" else "entity_id",
+                value=4,
+                product_id=parent_product_id,
+            )
+        )
+        return parent_product_id
+
     ## Insert Update Variants.
     def insert_update_variants(self, sku, data):
         # Validate the child product.
@@ -1060,7 +1211,7 @@ class Mage2Connector(object):
         # }
         parent_product_id = self.get_product_id_by_sku(sku)
 
-        attrbute_Ids = None
+        attrbute_ids = None
         for product in data.get("variants"):
             attributes = []
             for attribute_code, value in product["attributes"].items():
@@ -1094,7 +1245,7 @@ class Mage2Connector(object):
                     }
                 )
 
-            if attrbute_Ids is None:
+            if attrbute_ids is None:
                 attribute_ids = [attribute["attribute_id"] for attribute in attributes]
             else:
                 _attribute_ids = [attribute["attribute_id"] for attribute in attributes]
@@ -1335,9 +1486,12 @@ class Mage2Connector(object):
 
                         current_path_ids.append(category_id)
                         parent_id = category_id
+
+                    self.adaptor.commit()
                 except Exception:
                     log = traceback.format_exc()
                     self.logger.exception(log)
+                    self.adaptor.rollback()
                     raise
         return product_id
 
@@ -1417,14 +1571,14 @@ class Mage2Connector(object):
             )
             self.adaptor.mysql_cursor.execute(sql, params)
 
-            attCodes = list(
+            attribute_codes = list(
                 filter(lambda k: (attributes[k] == value), attributes.keys())
             )
-            if len(attCodes) > 0:
-                for attCode in attCodes:
+            if len(attribute_codes) > 0:
+                for attribute_code in attribute_codes:
                     # assign the attribute.
                     (data_type, attribute_metadata) = self.get_attribute_metadata(
-                        attCode, "catalog_product"
+                        attribute_code, "catalog_product"
                     )
                     cols = (
                         ["attribute_id", "store_id", "row_id", "value"]
