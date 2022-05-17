@@ -1157,7 +1157,7 @@ class Mage2Connector(object):
                 )
 
         # Insert or update the child product.
-        self.logger.info(f"Insert/Update the item ({sku}.")
+        self.logger.info(f"Insert/Update the item ({sku}).")
         for attribute_id in attribute_ids:
             self.adaptor.mysql_cursor.execute(
                 self.REPLACECATALOGPRODUCTSUPERATTRIBUTESQL.format(
@@ -1194,13 +1194,13 @@ class Mage2Connector(object):
                 product_id=parent_product_id,
             )
         )
+        self.adaptor.commit()
         return parent_product_id
 
     ## Insert Update Variants.
-    def insert_update_variants(self, sku, data):
+    def insert_update_variants(self, sku, data, store_id):
         # Validate the child product.
         # data = {
-        #     "store_id": "0",
         #     "variant_visibility": True,
         #     "variants": [
         #         {
@@ -1228,14 +1228,14 @@ class Mage2Connector(object):
                 option_id = self.get_option_id(
                     attribute_metadata["attribute_id"],
                     value,
-                    admin_store_id=data.get("store_id", "0"),
+                    admin_store_id=store_id,
                 )
                 if option_id is None:
                     options = {0: value}
                     self.set_attribute_option_values(
                         attribute_metadata["attribute_id"],
                         options,
-                        admin_store_id=data.get("store_id", "0"),
+                        admin_store_id=store_id,
                     )
                 attributes.append(
                     {
@@ -1271,7 +1271,7 @@ class Mage2Connector(object):
                     self.get_variants(
                         parent_product_id,
                         attribute_ids,
-                        admin_store_id=data.get("store_id", "0"),
+                        admin_store_id=store_id,
                     ),
                 )
             )
@@ -1293,7 +1293,7 @@ class Mage2Connector(object):
 
         # Insert or update the child product.
         for product in data.get("variants"):
-            self.logger.info(f"Insert/Update the item ({product['variant_sku']}.")
+            self.logger.info(f"Insert/Update the item ({product['variant_sku']}).")
             for attribute_id in attribute_ids:
                 self.adaptor.mysql_cursor.execute(
                     self.REPLACECATALOGPRODUCTSUPERATTRIBUTESQL.format(
@@ -1321,6 +1321,7 @@ class Mage2Connector(object):
                     product_id=product_id,
                 )
             )
+            self.adaptor.commit()
 
         # Visibility for the parent product.
         self.adaptor.mysql_cursor.execute(
@@ -1330,6 +1331,7 @@ class Mage2Connector(object):
                 product_id=parent_product_id,
             )
         )
+        self.adaptor.commit()
         return parent_product_id
 
     def set_product_category(self, product_id, category_id, position=0):

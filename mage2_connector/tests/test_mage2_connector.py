@@ -66,7 +66,7 @@ class Mage2ConnectorTest(unittest.TestCase):
             log = traceback.format_exc()
             logger.exception(log)
 
-    # @unittest.skip("demonstrating skipping")
+    @unittest.skip("demonstrating skipping")
     def test_insert_update_categories(self):
         try:
             logger.info(f"Stated at {time.strftime('%X')}")
@@ -82,6 +82,24 @@ class Mage2ConnectorTest(unittest.TestCase):
             ]
 
             self.mage2_connector.insert_update_categories(sku, data)
+            logger.info(f"Finished at {time.strftime('%X')}")
+        except Exception:
+            log = traceback.format_exc()
+            logger.exception(log)
+
+    # @unittest.skip("demonstrating skipping")
+    def test_insert_update_variant(self):
+        try:
+            logger.info(f"Stated at {time.strftime('%X')}")
+            sku = "107141-100-10641-12219"
+            data = {
+                "variant_visibility": True,
+                "parent_product_sku": "107141-HNESSENCE-12219",
+                "variant_attributes": {"pack_type": "100 : 25kg Drum"},
+            }
+            store_id = 0
+
+            self.mage2_connector.insert_update_variant(sku, data, store_id)
             logger.info(f"Finished at {time.strftime('%X')}")
         except Exception:
             log = traceback.format_exc()
