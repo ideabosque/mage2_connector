@@ -33,7 +33,7 @@ logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger()
 
 from mage2_connector import Mage2Connector
-
+from mage2_connector.format_product import FormatProduct
 
 class Mage2ConnectorTest(unittest.TestCase):
     def setUp(self):
@@ -54,6 +54,7 @@ class Mage2ConnectorTest(unittest.TestCase):
                     "r",
                 )
             )
+            print(product)
             sku = product["sku"]
             attribute_set = product["data"].pop("attribute_set")
             type_id = product["data"].pop("type_id")
@@ -61,6 +62,41 @@ class Mage2ConnectorTest(unittest.TestCase):
             self.mage2_connector.insert_update_product(
                 sku, attribute_set, product["data"], type_id, store_id
             )
+            logger.info(f"Finished at {time.strftime('%X')}")
+        except Exception:
+            log = traceback.format_exc()
+            logger.exception(log)
+
+    # @unittest.skip("demonstrating skipping")
+    def test_multi_insert_update_product(self):
+        try:
+            logger.info(f"Stated at {time.strftime('%X')}")
+            products = json.load(
+                open(
+                    "/var/www/projects/mage2_connector/mage2_connector/tests/products.json",
+                    "r",
+                )
+            )
+            for product in products:
+                format_data = FormatProduct(product["data"]).get_magento_data()
+                product_data = format_data.get("product_data")
+                category_data = format_data.get("category_data")
+                stock_data = format_data.get("stock_data")
+                tier_price_data = format_data.get("tier_price_data")
+                variant_data = format_data.get("variant_data")
+                
+                sku = product_data.pop("sku")
+                attribute_set = product_data.pop("attribute_set")
+                type_id = product_data.pop("type_id")
+                store_id = product_data.pop("store_id")
+                self.mage2_connector.insert_update_product(
+                    sku, attribute_set, product_data, type_id, store_id
+                )
+                self.mage2_connector.insert_update_cataloginventory_stock_item(sku, stock_data, store_id)
+                self.mage2_connector.insert_update_categories(sku, category_data)
+                self.mage2_connector.insert_update_product_tier_price(sku, store_id, tier_price_data)
+                if variant_data:
+                    self.mage2_connector.insert_update_variant(sku, variant_data, store_id)
             logger.info(f"Finished at {time.strftime('%X')}")
         except Exception:
             log = traceback.format_exc()
@@ -87,7 +123,7 @@ class Mage2ConnectorTest(unittest.TestCase):
             log = traceback.format_exc()
             logger.exception(log)
 
-    # @unittest.skip("demonstrating skipping")
+    @unittest.skip("demonstrating skipping")
     def test_insert_update_variant(self):
         try:
             logger.info(f"Stated at {time.strftime('%X')}")

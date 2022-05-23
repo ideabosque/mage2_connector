@@ -502,14 +502,47 @@ class Mage2Connector(object):
         AND order_id = '{order_id}'
     """
 
+    INSERTCATALOGINVENTORYSTOCKITEM = """
+        INSERT INTO cataloginventory_stock_item
+        (product_id, website_id, stock_id, is_qty_decimal, min_sale_qty, use_config_min_sale_qty, manage_stock, use_config_manage_stock, qty_increments, use_config_qty_increments)
+        VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """
+
     UPDATECATALOGINVENTORYSTOCKITEM = """
         UPDATE cataloginventory_stock_item
-        SET min_sale_qty = %s,
-        use_config_min_sale_qty = 0,
+        SET is_qty_decimal  = %s,
+        min_sale_qty = %s,
+        use_config_min_sale_qty = %s,
+        manage_stock = %s,
+        use_config_manage_stock = %s,
         qty_increments = %s,
-        use_config_qty_increments = 0
+        use_config_qty_increments = %s
         WHERE website_id = %s
         AND product_id = %s
+        AND stock_id = %s
+    """
+
+    GETCURRENTCATALOGINVENTORYSTOCKITEMSQL = """
+        SELECT *
+        FROM cataloginventory_stock_item
+        WHERE product_id = %s and website_id = %s and stock_id = %s
+    """
+
+    GETPRODUCTTYPEBYSKUSQL = """
+        SELECT type_id 
+        FROM catalog_product_entity
+        WHERE sku = %s
+    """
+
+    INSERTCATALOGPRODUCTENTITYTIERPRICESQL = """
+        INSERT INTO catalog_product_entity_tier_price
+        ({key}, all_groups, customer_group_id, qty, value, website_id, percentage_value)
+        VALUES(%s, %s, %s, %s, %s, %s, %s)
+    """
+
+    DELETECATALOGPRODUCTENTITYTIERPRICESQL = """
+        DELETE FROM catalog_product_entity_tier_price
+        WHERE {key} = %s and website_id = %s
     """
 
     def __init__(self, logger, **setting):
@@ -829,7 +862,7 @@ class Mage2Connector(object):
                 self.update_catalog_product_entity(product_id, attribute_set, type_id)
 
             # update catalog_inventory_stock_item.
-            self.update_catalog_inventory_stock_item(sku, data, store_id)
+            #self.update_catalog_inventory_stock_item(sku, data, store_id)
 
             # insert update attributes.
             self.insert_update_entity_data(
@@ -843,19 +876,123 @@ class Mage2Connector(object):
             self.adaptor.rollback()
             raise
 
-    def update_catalog_inventory_stock_item(self, sku, data, store_id):
+    def insert_update_cataloginventory_stock_item(self, sku, stock_data, store_id):
         website_id = self.get_website_id_by_store_id(store_id)
         product_id = self.get_product_id_by_sku(sku)
+        type_id = self.get_product_type_id_by_sku(sku)
+        if not product_id:
+            raise Exception(f"Product ({sku}) does not existed in Magento.")
+        if type_id != "simple":
+            return
+            
+        stock_id = stock_data.get("stock_id", 1)
+        current_stock_item = self.get_current_cataloginventory_stock_item(product_id=product_id, stock_id=stock_id, website_id=website_id)
+        if current_stock_item:
+            stock_item = {}
+            for field, value in current_stock_item.items():
+                if stock_data.get(field, None) is None:
+                    stock_item[field] = value
+                else:
+                    stock_item[field] = stock_data.get(field)
 
+            self.update_cataloginventory_stock_item(product_id=product_id, website_id=website_id, stock_id=stock_id, stock_data=stock_item)
+        else:
+            self.insert_cataloginventory_stock_item(product_id=product_id, website_id=website_id, stock_id=stock_id, stock_data=stock_data)
+
+    def insert_cataloginventory_stock_item(self, product_id, website_id, stock_id, stock_data):
+        self.adaptor.mysql_cursor.execute(
+            self.INSERTCATALOGINVENTORYSTOCKITEM,
+            [
+                product_id,
+                website_id,
+                stock_id,
+                stock_data.get("is_qty_decimal", 1 if float(stock_data.get("min_sale_qty", 1)) == int(stock_data.get("min_sale_qty", 1)) else 0),
+                stock_data.get("min_sale_qty", 1),
+                stock_data.get("use_config_min_sale_qty", 1 if stock_data.get("min_sale_qty", None) is None else 0),
+                stock_data.get("manage_stock", 0),
+                stock_data.get("use_config_manage_stock", 1 if stock_data.get("manage_stock", None) is None else 0),
+                stock_data.get("qty_increments", 0),
+                stock_data.get("use_config_qty_increments", 1 if stock_data.get("qty_increments", None) is None else 0),
+            ]
+        )
+    
+    def get_current_cataloginventory_stock_item(self, product_id, stock_id, website_id):
+        self.adaptor.mysql_cursor.execute(
+            self.GETCURRENTCATALOGINVENTORYSTOCKITEMSQL,
+            [
+                product_id,
+                website_id,
+                stock_id
+            ]
+        )
+        exist = self.adaptor.mysql_cursor.fetchone()
+        return exist
+    
+    def update_cataloginventory_stock_item(self, product_id, stock_id, website_id, stock_data):
         self.adaptor.mysql_cursor.execute(
             self.UPDATECATALOGINVENTORYSTOCKITEM,
             [
-                data.get("min_sale_qty", 1),
-                data.get("qty_increments", 1),
-                website_id,
+                stock_data.get("is_qty_decimal", 1 if float(stock_data.get("min_sale_qty", 1)) == int(stock_data.get("min_sale_qty", 1)) else 0),
+                stock_data.get("min_sale_qty", 1),
+                stock_data.get("use_config_min_sale_qty", 1 if stock_data.get("min_sale_qty", None) is None else 0),
+                stock_data.get("manage_stock", 0),
+                stock_data.get("use_config_manage_stock", 1 if stock_data.get("manage_stock", None) is None else 0),
+                stock_data.get("qty_increments", 0),
+                stock_data.get("use_config_qty_increments", 1 if stock_data.get("qty_increments", None) is None else 0),
                 product_id,
-            ],
+                website_id,
+                stock_id,
+            ]
         )
+
+    def insert_update_product_tier_price(self, sku, store_id, tier_price):
+        website_id = self.get_website_id_by_store_id(store_id)
+        product_id = self.get_product_id_by_sku(sku)
+        type_id = self.get_product_type_id_by_sku(sku)
+        if not product_id:
+            raise Exception(f"Product ({sku}) does not existed in Magento.")
+        if type_id not in ["simple", "virtual"]:
+            return
+
+        self.delete_product_tier_price(product_id=product_id, website_id=website_id)
+        if len(tier_price) > 0:
+            self.insert_product_tier_price(product_id=product_id, website_id=website_id, tier_price=tier_price)
+
+    def insert_product_tier_price(self, product_id, website_id, tier_price):
+        key = "row_id" if self.setting["VERSION"] == "EE" else "entity_id"
+        sql = self.INSERTCATALOGPRODUCTENTITYTIERPRICESQL.format(key=key)
+        for tier_price_data in tier_price:
+            if tier_price_data.get("qty", None) and tier_price_data.get("value", None):
+                self.adaptor.mysql_cursor.execute(
+                    sql,
+                    [
+                        product_id,
+                        tier_price_data.get("all_groups", 1),
+                        tier_price_data.get("customer_group_id", 0),
+                        tier_price_data.get("qty", 1),
+                        tier_price_data.get("value", 1),
+                        website_id,
+                        tier_price_data.get("percentage_value", None),
+                    ]
+                )
+
+    def delete_product_tier_price(self, product_id, website_id):
+        key = "row_id" if self.setting["VERSION"] == "EE" else "entity_id"
+        sql = self.DELETECATALOGPRODUCTENTITYTIERPRICESQL.format(key=key)
+        self.adaptor.mysql_cursor.execute(
+            sql,
+            [
+                product_id,
+                website_id
+            ]
+        )
+
+    def get_product_type_id_by_sku(self, sku):
+        self.adaptor.mysql_cursor.execute(self.GETPRODUCTTYPEBYSKUSQL, [sku])
+        entity = self.adaptor.mysql_cursor.fetchone()
+        if entity:
+            return entity["type_id"]
+        return None
 
     def insert_update_custom_option(self, product_id, option):
         title = option.pop("title")
