@@ -945,7 +945,7 @@ class Mage2Connector(object):
             ]
         )
 
-    def insert_update_product_tier_price(self, sku, store_id, tier_price):
+    def insert_update_product_tier_price(self, sku, tier_price, store_id):
         website_id = self.get_website_id_by_store_id(store_id)
         product_id = self.get_product_id_by_sku(sku)
         type_id = self.get_product_type_id_by_sku(sku)

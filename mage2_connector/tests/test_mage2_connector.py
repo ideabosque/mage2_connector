@@ -54,7 +54,6 @@ class Mage2ConnectorTest(unittest.TestCase):
                     "r",
                 )
             )
-            print(product)
             sku = product["sku"]
             attribute_set = product["data"].pop("attribute_set")
             type_id = product["data"].pop("type_id")
@@ -94,7 +93,7 @@ class Mage2ConnectorTest(unittest.TestCase):
                 )
                 self.mage2_connector.insert_update_cataloginventory_stock_item(sku, stock_data, store_id)
                 self.mage2_connector.insert_update_categories(sku, category_data)
-                self.mage2_connector.insert_update_product_tier_price(sku, store_id, tier_price_data)
+                self.mage2_connector.insert_update_product_tier_price(sku, tier_price_data, store_id)
                 if variant_data:
                     self.mage2_connector.insert_update_variant(sku, variant_data, store_id)
             logger.info(f"Finished at {time.strftime('%X')}")
