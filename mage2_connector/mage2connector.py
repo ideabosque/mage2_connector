@@ -545,6 +545,43 @@ class Mage2Connector(object):
         WHERE {key} = %s and website_id = %s
     """
 
+    GETWEBSITEBYWEBSITEIDSQL = """
+        SELECT * 
+        FROM store_website
+        WHERE website_id = %s
+    """
+
+    GETSTOCKIDBYSALESCHANNELSQL = """
+        SELECT stock_id 
+        FROM inventory_stock_sales_channel
+        WHERE type = %s and code = %s
+    """
+
+    GETDEFAULTWEBSITEIDSQL = """
+        SELECT * 
+        FROM store_website
+        WHERE is_default = 1
+    """
+
+    INSERTINVENTORYSTOCK = """
+        INSERT INTO {table_name}
+        (sku, quantity, is_salable)
+        VALUES(%s, %s, %s)
+    """
+
+    UPDATEINVENTORYSTOCK = """
+        UPDATE {table_name}
+        SET quantity  = %s,
+        is_salable = %s
+        WHERE sku = %s
+    """
+
+    GETINVENTORYSTOCK = """
+        SELECT *
+        FROM {table_name}
+        WHERE sku = %s
+    """
+
     def __init__(self, logger, **setting):
         self.logger = logger
         self.setting = setting
@@ -882,6 +919,9 @@ class Mage2Connector(object):
         type_id = self.get_product_type_id_by_sku(sku)
         if not product_id:
             raise Exception(f"Product ({sku}) does not existed in Magento.")
+
+        self.insert_update_inventory_stock(website_id, sku, stock_data.get("quantity", 0))
+
         if type_id != "simple":
             return
 
@@ -889,6 +929,7 @@ class Mage2Connector(object):
         current_stock_item = self.get_current_cataloginventory_stock_item(
             product_id=product_id, stock_id=stock_id, website_id=website_id
         )
+
         if current_stock_item:
             stock_item = {}
             for field, value in current_stock_item.items():
@@ -910,7 +951,7 @@ class Mage2Connector(object):
                 stock_id=stock_id,
                 stock_data=stock_data,
             )
-
+    
     def insert_cataloginventory_stock_item(
         self, product_id, website_id, stock_id, stock_data
     ):
@@ -922,10 +963,10 @@ class Mage2Connector(object):
                 stock_id,
                 stock_data.get(
                     "is_qty_decimal",
-                    1
+                    0
                     if float(stock_data.get("min_sale_qty", 1))
                     == int(stock_data.get("min_sale_qty", 1))
-                    else 0,
+                    else 1,
                 ),
                 stock_data.get("min_sale_qty", 1),
                 stock_data.get(
@@ -945,6 +986,7 @@ class Mage2Connector(object):
             ],
         )
 
+    
     def get_current_cataloginventory_stock_item(self, product_id, stock_id, website_id):
         self.adaptor.mysql_cursor.execute(
             self.GETCURRENTCATALOGINVENTORYSTOCKITEMSQL,
@@ -961,10 +1003,10 @@ class Mage2Connector(object):
             [
                 stock_data.get(
                     "is_qty_decimal",
-                    1
+                    0
                     if float(stock_data.get("min_sale_qty", 1))
                     == int(stock_data.get("min_sale_qty", 1))
-                    else 0,
+                    else 1,
                 ),
                 stock_data.get("min_sale_qty", 1),
                 stock_data.get(
@@ -986,6 +1028,74 @@ class Mage2Connector(object):
                 stock_id,
             ],
         )
+
+    def insert_update_inventory_stock(self, website_id, sku, quantity=0, is_salable=1):
+        stock_id = self.get_stock_id_by_sales_channel(website_id)
+        if stock_id is None:
+            return
+        table_name = self.get_inventory_stock_table_name(stock_id)
+        inventory_stock_data = self.get_inventory_stock(table_name, sku)
+        if inventory_stock_data is None:
+            self.insert_inventory_stock(table_name, sku, quantity, is_salable)
+        else:
+            self.update_inventory_stock(table_name, sku, quantity, is_salable)
+
+    def insert_inventory_stock(self, table_name, sku, quantity=0, is_salable=1):
+        sql = self.INSERTINVENTORYSTOCK.format(table_name=table_name)
+        self.adaptor.mysql_cursor.execute(
+            sql,
+            [sku, quantity, is_salable]
+        )
+    def update_inventory_stock(self, table_name, sku, quantity=0, is_salable=1):
+        sql = self.UPDATEINVENTORYSTOCK.format(table_name=table_name)
+        self.adaptor.mysql_cursor.execute(
+            sql,
+            [quantity, is_salable, sku]
+        )
+
+    def get_inventory_stock(self, table_name, sku):
+        sql = self.GETINVENTORYSTOCK.format(table_name=table_name)
+        self.adaptor.mysql_cursor.execute(
+            sql,
+            [sku]
+        )
+        res = self.adaptor.mysql_cursor.fetchone()
+        return res
+
+    def get_stock_id_by_sales_channel(self, website_id):
+        website = None
+        stock_id = None
+        if website_id == 0:
+            website = self.get_default_website()
+        else:
+            website = self.get_website_by_website_id(website_id)
+        if website is not None:
+            self.adaptor.mysql_cursor.execute(
+                self.GETSTOCKIDBYSALESCHANNELSQL,
+                ["website", website["code"]]
+            )
+            res = self.adaptor.mysql_cursor.fetchone()
+            if res is not None:
+                stock_id = res["stock_id"]
+        return stock_id
+
+    def get_inventory_stock_table_name(self, stock_id):
+        return "inventory_stock_{stock_id}".format(stock_id=stock_id)
+
+    def get_website_by_website_id(self, website_id):
+        self.adaptor.mysql_cursor.execute(
+            self.GETWEBSITEBYWEBSITEIDSQL,
+            [website_id]
+        )
+        res = self.adaptor.mysql_cursor.fetchone()
+        return res
+
+    def get_default_website(self):
+        self.adaptor.mysql_cursor.execute(
+            self.GETDEFAULTWEBSITEIDSQL
+        )
+        res = self.adaptor.mysql_cursor.fetchone()
+        return res
 
     def insert_update_product_tier_price(self, sku, tier_price, store_id):
         website_id = self.get_website_id_by_store_id(store_id)
