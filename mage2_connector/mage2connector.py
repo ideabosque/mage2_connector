@@ -582,6 +582,31 @@ class Mage2Connector(object):
         WHERE sku = %s
     """
 
+    GETINVENTORYSOURCE = """
+        SELECT *
+        FROM inventory_source
+        WHERE source_code = %s
+    """
+
+    INSERTINVENTORYSOURCEITEM = """
+        INSERT INTO inventory_source_item
+        (source_code, sku, quantity, status)
+        VALUES(%s, %s, %s, %s)
+    """
+
+    UPDATEINVENTORYSOURCEITEM = """
+        UPDATE inventory_source_item
+        SET quantity  = %s,
+        status = %s
+        WHERE source_code = %s AND sku = %s
+    """
+
+    GETINVENTORYSOURCEITEM = """
+        SELECT *
+        FROM inventory_source_item
+        WHERE source_code = %s AND sku = %s
+    """
+
     def __init__(self, logger, **setting):
         self.logger = logger
         self.setting = setting
@@ -917,14 +942,23 @@ class Mage2Connector(object):
         website_id = self.get_website_id_by_store_id(store_id)
         product_id = self.get_product_id_by_sku(sku)
         type_id = self.get_product_type_id_by_sku(sku)
+
         if not product_id:
             raise Exception(f"Product ({sku}) does not existed in Magento.")
-
-        self.insert_update_inventory_stock(website_id, sku, stock_data.get("quantity", 0))
+        
+        self.insert_update_inventory_stock(
+            website_id=website_id, type_id=type_id, sku=sku, quantity=stock_data.get("quantity", 0), is_salable=1
+        )
 
         if type_id != "simple":
             return
 
+        sources = stock_data.get("inventory_sources", [])
+        for source_data in sources:
+            self.insert_update_inventory_source_item(
+                source_code=source_data.get("source_code", None), sku=sku, quantity=source_data.get("quantity", 0), status=source_data.get("status", 1)
+            )
+        
         stock_id = stock_data.get("stock_id", 1)
         current_stock_item = self.get_current_cataloginventory_stock_item(
             product_id=product_id, stock_id=stock_id, website_id=website_id
@@ -1029,16 +1063,18 @@ class Mage2Connector(object):
             ],
         )
 
-    def insert_update_inventory_stock(self, website_id, sku, quantity=0, is_salable=1):
+    def insert_update_inventory_stock(self, website_id, type_id, sku, quantity=0, is_salable=1):
         stock_id = self.get_stock_id_by_sales_channel(website_id)
         if stock_id is None:
             return
-        table_name = self.get_inventory_stock_table_name(stock_id)
-        inventory_stock_data = self.get_inventory_stock(table_name, sku)
-        if inventory_stock_data is None:
-            self.insert_inventory_stock(table_name, sku, quantity, is_salable)
-        else:
-            self.update_inventory_stock(table_name, sku, quantity, is_salable)
+
+        if type_id in ["simple", "configurable"]:
+            table_name = self.get_inventory_stock_table_name(stock_id)
+            inventory_stock_data = self.get_inventory_stock(table_name, sku)
+            if inventory_stock_data is None:
+                self.insert_inventory_stock(table_name, sku, quantity, is_salable)
+            else:
+                self.update_inventory_stock(table_name, sku, quantity, is_salable)
 
     def insert_inventory_stock(self, table_name, sku, quantity=0, is_salable=1):
         sql = self.INSERTINVENTORYSTOCK.format(table_name=table_name)
@@ -1081,6 +1117,44 @@ class Mage2Connector(object):
 
     def get_inventory_stock_table_name(self, stock_id):
         return "inventory_stock_{stock_id}".format(stock_id=stock_id)
+
+    def insert_update_inventory_source_item(self, source_code, sku, quantity, status):
+        inventory_source_item = self.get_inventory_source_item(source_code, sku)
+        if inventory_source_item is None:
+            self.insert_inventory_source_item(source_code, sku, quantity, status)
+        else:
+            self.update_inventory_source_item(source_code, sku, quantity, status)
+
+    def insert_inventory_source_item(self, source_code, sku, quantity=0, status=1):
+        self.adaptor.mysql_cursor.execute(
+            self.INSERTINVENTORYSOURCEITEM,
+            [source_code, sku, quantity, status]
+        )
+
+    def update_inventory_source_item(self, source_code, sku, quantity=0, status=1):
+        self.adaptor.mysql_cursor.execute(
+            self.UPDATEINVENTORYSOURCEITEM,
+            [quantity, status, source_code, sku]
+        )
+
+    def get_inventory_source_item(self, source_code, sku):
+        self.adaptor.mysql_cursor.execute(
+            self.GETINVENTORYSOURCEITEM,
+            [source_code, sku]
+        )
+        res = self.adaptor.mysql_cursor.fetchone()
+        return res
+
+    def exists_inventory_source_code(self, source_code):
+        self.adaptor.mysql_cursor.execute(
+            self.GETINVENTORYSOURCE,
+            [source_code]
+        )
+        res = self.adaptor.mysql_cursor.fetchone()
+        if res:
+            return True
+        else:
+            return False
 
     def get_website_by_website_id(self, website_id):
         self.adaptor.mysql_cursor.execute(
