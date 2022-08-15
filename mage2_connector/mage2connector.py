@@ -17,7 +17,7 @@ class Adaptor(object):
             user=setting.get("user"),
             password=setting.get("password"),
             db=setting.get("schema"),
-            port=setting.get("port", 3306),
+            port=int(setting.get("port", 3306)),
             charset="utf8mb4",
             cursorclass=cursors.DictCursor,
         )
