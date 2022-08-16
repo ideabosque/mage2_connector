@@ -6,7 +6,7 @@ __author__ = "bibow"
 
 import re, traceback
 from pymysql import connect, cursors
-
+from tenacity import retry, wait_exponential, stop_after_attempt
 
 class Adaptor(object):
     """Adaptor contain MySQL cursor object."""
@@ -913,6 +913,11 @@ class Mage2Connector(object):
         )
 
     ## Insert Update Product.
+    @retry(
+        reraise=True,
+        wait=wait_exponential(multiplier=1, max=60),
+        stop=stop_after_attempt(5),
+    )
     def insert_update_product(self, sku, attribute_set, data, type_id, store_id):
         try:
             product_id = self.get_product_id_by_sku(sku)
@@ -937,7 +942,11 @@ class Mage2Connector(object):
         except Exception:
             self.adaptor.rollback()
             raise
-
+    @retry(
+        reraise=True,
+        wait=wait_exponential(multiplier=1, max=60),
+        stop=stop_after_attempt(5),
+    )     
     def insert_update_cataloginventory_stock_item(self, sku, stock_data, store_id):
         website_id = self.get_website_id_by_store_id(store_id)
         product_id = self.get_product_id_by_sku(sku)
@@ -1171,6 +1180,11 @@ class Mage2Connector(object):
         res = self.adaptor.mysql_cursor.fetchone()
         return res
 
+    @retry(
+        reraise=True,
+        wait=wait_exponential(multiplier=1, max=60),
+        stop=stop_after_attempt(5),
+    )
     def insert_update_product_tier_price(self, sku, tier_price, store_id):
         website_id = self.get_website_id_by_store_id(store_id)
         product_id = self.get_product_id_by_sku(sku)
@@ -1441,6 +1455,11 @@ class Mage2Connector(object):
         return variants
 
     ## Insert Update Variant.
+    @retry(
+        reraise=True,
+        wait=wait_exponential(multiplier=1, max=60),
+        stop=stop_after_attempt(5),
+    )
     def insert_update_variant(self, sku, data, store_id):
         # Validate the child product.
         # data = {
@@ -1802,6 +1821,11 @@ class Mage2Connector(object):
         return category_id
 
     ## Insert Update Categories.
+    @retry(
+        reraise=True,
+        wait=wait_exponential(multiplier=1, max=60),
+        stop=stop_after_attempt(5),
+    )
     def insert_update_categories(self, sku, data):
         product_id = self.get_product_id_by_sku(sku)
 
