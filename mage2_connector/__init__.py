@@ -5,4 +5,4 @@ from __future__ import print_function
 __author__ = "bibow"
 
 __all__ = ["mage2connector"]
-from .mage2connector import Mage2Connector
+from .mage2connector import Mage2Connector, Mage2OrderConnector

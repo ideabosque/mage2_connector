@@ -5,6 +5,7 @@ from __future__ import print_function
 __author__ = "bibow"
 
 import re, traceback
+import requests, json
 from pymysql import connect, cursors
 from tenacity import retry, wait_exponential, stop_after_attempt
 
@@ -611,6 +612,9 @@ class Mage2Connector(object):
         self.logger = logger
         self.setting = setting
         self.adaptor = Adaptor(**setting)
+        self.mage2_domain = setting.get("mage2_domain")
+        self.mage2_token = setting.get("mage2_token")
+        self.mage2_scope = setting.get("mage2_scope", "default")
 
     def __del__(self):
         if self.adaptor:
@@ -624,6 +628,29 @@ class Mage2Connector(object):
     @adaptor.setter
     def adaptor(self, adaptor):
         self._adaptor = adaptor
+
+    def request_magento_rest_api(self, api_path, method="POST", payload=[]):
+        api_url = "{domain}/rest/{scope}/V1/{api_path}".format(
+            domain=self.mage2_domain,
+            scope=self.mage2_scope,
+            api_path=api_path
+        )
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer {token}".format(token=self.mage2_token)
+        }
+        method = method.upper()
+        response = requests.request(
+            method,
+            api_url,
+            headers=headers,
+            data=json.dumps(payload),
+        )
+        if response.status_code == 200:
+            return response.content
+        else:
+            self.logger.error(response.content)
+            raise Exception(response.content)
 
     def get_entity_metadata(
         self, entity_type_code="catalog_product", attribute_set="Default"
@@ -2068,3 +2095,292 @@ class Mage2Connector(object):
             )
             self.adaptor.mysql_cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
         return product_id
+
+class Mage2OrderConnector(object):
+
+    STATE_NEW = "new"
+    STATE_PENDING_PAYMENT = "pending_payment"
+    STATE_PROCESSING = "processing"
+    STATE_COMPLETE = "complete"
+    STATE_CLOSED = "closed"
+    STATE_CANCELED = "canceled"
+    STATE_HOLDED = "holded"
+    STATE_PAYMENT_REVIEW = "payment_review"
+
+    GETORDERBYINCREMENTIDSQL = """
+        SELECT *
+        FROM sales_order
+        WHERE increment_id = %s
+    """
+
+    UPDATEORDERSTATUSANDSTATESQL = """
+        UPDATE sales_order
+        SET state = %s,
+        status = %s
+        WHERE entity_id = %s;
+    """
+
+    GETORDERCOMMENTLISTSQL = """
+        SELECT *
+        FROM sales_order_status_history
+        WHERE parent_id = %s
+    """
+
+    INSERTORDERCOMMENTSQL = """
+        INSERT INTO sales_order_status_history
+        (entity_id, parent_id, is_customer_notified, is_visible_on_front, comment, status, created_at, entity_name)
+        VALUES(NULL, %s, %s, %s, %s, %s, UTC_TIMESTAMP(), %s);
+    """
+
+    GETORDERITEMSSQL = """
+        SELECT *
+        FROM sales_order_item
+        WHERE order_id = %s
+    """
+    
+
+    def __init__(self, logger, **setting):
+        self.logger = logger
+        self.setting = setting
+        self.adaptor = Adaptor(**setting)
+        self.mage2_domain = setting.get("mage2_domain")
+        self.mage2_token = setting.get("mage2_token")
+        self.mage2_scope = setting.get("mage2_scope", "default")
+
+    def __del__(self):
+        if self.adaptor:
+            self.adaptor.__del__()
+            self.logger.info("Close Mage2 DB connection")
+
+    @property
+    def adaptor(self):
+        return self._adaptor
+
+    @adaptor.setter
+    def adaptor(self, adaptor):
+        self._adaptor = adaptor
+    
+    def request_magento_rest_api(self, api_path, method="POST", payload=[]):
+        api_url = "{domain}/rest/{scope}/V1/{api_path}".format(
+            domain=self.mage2_domain,
+            scope=self.mage2_scope,
+            api_path=api_path
+        )
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer {token}".format(token=self.mage2_token)
+        }
+        method = method.upper()
+        response = requests.request(
+            method,
+            api_url,
+            headers=headers,
+            data=json.dumps(payload),
+        )
+        if response.status_code == 200:
+            return response.content
+        else:
+            self.logger.error(response.content)
+            raise Exception(response.content)
+
+    def get_order_by_increment_id(self, increment_id):
+        self.adaptor.mysql_cursor.execute(
+            self.GETORDERBYINCREMENTIDSQL,
+            [increment_id]
+        )
+        res = self.adaptor.mysql_cursor.fetchone()
+        return res
+
+    def ship_order(self, order_id, items=[], notify=False, append_comment=False, comment=None, is_visible_on_front=False, tracks=[], packages=[], arguments=None):
+        
+        payload = {
+            "items": [],
+            "notify": notify,
+            "appendComment": append_comment,
+            "comment": {"comment": comment, "isVisibleOnFront": is_visible_on_front} if comment is not None else None,
+            "tracks": tracks
+        }
+        api_path = "order/{order_id}/ship".format(order_id=order_id)
+        return self.request_magento_rest_api(api_path=api_path, method="POST", payload=payload)
+
+    def invoice_order(self, order_id, capture=False, items=[], notify=False, append_comment=False, comment=None, is_visible_on_front=False, arguments=None):
+        payload = {
+            "items": items,
+            "notify": notify,
+            "capture": capture,
+            "appendComment": append_comment,
+            "comment": {"comment": comment, "isVisibleOnFront": is_visible_on_front} if comment is not None else None
+        }
+        api_path = "order/{order_id}/invoice".format(order_id=order_id)
+        return self.request_magento_rest_api(api_path=api_path, method="POST", payload=payload)
+    
+    def insert_order_comment(self, order_id, comment, status, allow_duplicate_comment=False, is_customer_notified=0, is_visible_on_front=0, entity_name="order"):
+        can_add_comment = True
+        if allow_duplicate_comment:
+            order_comments = self.get_order_comment_list(order_id)
+            for order_comment in order_comments:
+                if order_comment["comment"] == comment:
+                    can_add_comment = False
+        if can_add_comment:
+            self.add_order_comment(
+                order_id=order_id,
+                comment=comment,
+                status=status,
+                is_customer_notified=is_customer_notified,
+                is_visible_on_front=is_visible_on_front,
+                entity_name=entity_name
+            )
+
+    def get_order_comment_list(self, order_id):
+        self.adaptor.mysql_cursor.execute(
+            self.GETORDERCOMMENTLISTSQL,
+            [order_id]
+        )
+        rows = self.adaptor.mysql_cursor.fetchall()
+        return rows
+
+    def add_order_comment(self, order_id, comment, status, is_customer_notified=0, is_visible_on_front=0, entity_name="order"):
+        self.adaptor.mysql_cursor.execute(
+            self.INSERTORDERCOMMENTSQL,
+            [
+                order_id,
+                is_customer_notified,
+                is_visible_on_front,
+                comment,
+                status,
+                entity_name
+            ],
+        )
+        self.adaptor.commit()
+
+    def get_order_items(self, order_id):
+        self.adaptor.mysql_cursor.execute(
+            self.GETORDERITEMSSQL,
+            [order_id]
+        )
+        rows = self.adaptor.mysql_cursor.fetchall()
+        return rows
+
+    def is_dummy_order_item(self, format_order_item, is_shipment=False):
+        if is_shipment:
+            if format_order_item.get("has_children", False) and format_order_item.get("is_ship_separately", False):
+                return True
+            
+            if format_order_item.get("has_children", False) and not format_order_item.get("is_ship_separately", False):
+                return False
+
+            if format_order_item.get("has_parent", False) and format_order_item.get("is_ship_separately", False):
+                return False
+
+            if format_order_item.get("has_parent", False) and not format_order_item.get("is_ship_separately", False):
+                return True
+        else:
+            if format_order_item.get("has_children", False) and format_order_item.get("is_children_calculated", False):
+                return True
+            
+            if format_order_item.get("has_children", False) and not format_order_item.get("is_children_calculated", False):
+                return False
+
+            if format_order_item.get("has_parent", False) and format_order_item.get("is_children_calculated", False):
+                return False
+
+            if format_order_item.get("has_parent", False) and not format_order_item.get("is_children_calculated", False):
+                return True
+        return False
+
+    def format_order_items(self, order_items):
+        format_items = []
+        for item in order_items:
+            has_children = False
+            has_parent = False
+            is_ship_separately = False
+            is_children_calculated = False
+            parent_item = None
+            for order_item in order_items:
+                if item["item_id"] == order_item["item_id"]:
+                    continue
+                if item["parent_item_id"] == order_item["item_id"]:
+                    has_parent = True
+                    parent_item = order_item
+                if item["item_id"] == order_item["parent_item_id"]:
+                    has_children = True
+                    
+            if has_parent and parent_item:
+                product_options = json.loads(item.get("product_options")) if item.get("product_options", None) is not None else None
+                if product_options is not None and product_options.get("shipment_type") == 1:
+                    is_ship_separately = True
+                if product_options is not None and product_options.get("product_calculations") == 0:
+                    is_children_calculated = True
+
+            item["has_children"] = has_children
+            item["has_parent"] = has_parent
+            item["is_ship_separately"] = is_ship_separately
+            item["is_children_calculated"] = is_children_calculated
+            format_items.append(item)
+
+        return format_items
+
+
+    def can_ship_order(self, order):
+        order_state = order.get("state")
+        is_virtual = order.get("is_virtual")
+        if self.can_unhold_order(order_state) or self.is_order_payment_review(order_state):
+            return False
+        if self.is_order_canceled(order_state) or is_virtual:
+            return False
+        order_items = self.get_order_items(order.get("entity_id"))
+        format_items = self.format_order_items(order_items)
+        for format_order_item in format_items:
+            if self.is_dummy_order_item(format_order_item, True):
+                continue
+            qty_to_ship = format_order_item.get("qty_ordered", 0) - max([format_order_item.get("qty_shipped", 0), format_order_item.get("qty_refunded", 0), format_order_item.get("qty_canceled", 0)])
+            if (
+                qty_to_ship > 0
+                and not format_order_item.get("is_virtual") 
+                and not format_order_item.get("locked_do_ship") 
+                and not (format_order_item.get("qty_refunded") == format_order_item.get("qty_ordered"))
+            ):
+                return True
+        return False
+        
+    def can_invoice_order(self, order):
+        order_state = order.get("state")
+        if self.can_unhold_order(order_state) or self.is_order_payment_review(order_state):
+            return False
+        if self.is_order_canceled(order_state) or order_state == self.STATE_COMPLETE or order_state == self.STATE_CLOSED:
+            return False
+
+        order_items = self.get_order_items(order.get("entity_id"))
+        format_items = self.format_order_items(order_items)
+        for format_order_item in format_items:
+            if self.is_dummy_order_item(format_order_item):
+                continue
+            qty_to_invoice = format_order_item.get("qty_ordered", 0) - format_order_item.get("qty_invoiced", 0) -format_order_item.get("qty_canceled", 0)
+            if (
+                qty_to_invoice > 0
+                and not format_order_item.get("locked_do_invoice")
+            ):
+                return True
+        return False
+
+    def update_order_state_status(self, order_id, state, status):
+        self.adaptor.mysql_cursor.execute(
+            self.UPDATEORDERSTATUSANDSTATESQL,
+            [
+               state,
+               status,
+               order_id
+            ],
+        )
+        self.adaptor.commit()
+    
+    def can_unhold_order(self, order_state):
+        if self.is_order_payment_review(order_state):
+            return False
+        return order_state == self.STATE_HOLDED
+
+    def is_order_canceled(self, order_state):
+        return order_state == self.STATE_CANCELED
+    
+    def is_order_payment_review(self, order_state):
+        return order_state == self.STATE_PAYMENT_REVIEW
