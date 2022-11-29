@@ -629,7 +629,7 @@ class Mage2Connector(object):
     def adaptor(self, adaptor):
         self._adaptor = adaptor
 
-    def request_magento_rest_api(self, api_path, method="POST", payload=[]):
+    def request_magento_rest_api(self, api_path, method="POST", payload={}):
         api_url = "{domain}/rest/{scope}/V1/{api_path}".format(
             domain=self.mage2_domain,
             scope=self.mage2_scope,
@@ -986,9 +986,6 @@ class Mage2Connector(object):
             website_id=website_id, type_id=type_id, sku=sku, quantity=stock_data.get("quantity", 0), is_salable=1
         )
 
-        if type_id != "simple":
-            return
-
         sources = stock_data.get("inventory_sources", [])
         for source_data in sources:
             self.insert_update_inventory_source_item(
@@ -1104,13 +1101,12 @@ class Mage2Connector(object):
         if stock_id is None:
             return
 
-        if type_id in ["simple", "configurable"]:
-            table_name = self.get_inventory_stock_table_name(stock_id)
-            inventory_stock_data = self.get_inventory_stock(table_name, sku)
-            if inventory_stock_data is None:
-                self.insert_inventory_stock(table_name, sku, quantity, is_salable)
-            else:
-                self.update_inventory_stock(table_name, sku, quantity, is_salable)
+        table_name = self.get_inventory_stock_table_name(stock_id)
+        inventory_stock_data = self.get_inventory_stock(table_name, sku)
+        if inventory_stock_data is None:
+            self.insert_inventory_stock(table_name, sku, quantity, is_salable)
+        else:
+            self.update_inventory_stock(table_name, sku, quantity, is_salable)
 
     def insert_inventory_stock(self, table_name, sku, quantity=0, is_salable=1):
         sql = self.INSERTINVENTORYSTOCK.format(table_name=table_name)
@@ -2160,7 +2156,7 @@ class Mage2OrderConnector(object):
     def adaptor(self, adaptor):
         self._adaptor = adaptor
     
-    def request_magento_rest_api(self, api_path, method="POST", payload=[]):
+    def request_magento_rest_api(self, api_path, method="POST", payload={}):
         api_url = "{domain}/rest/{scope}/V1/{api_path}".format(
             domain=self.mage2_domain,
             scope=self.mage2_scope,
