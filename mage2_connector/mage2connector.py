@@ -260,6 +260,17 @@ class Mage2Connector(object):
         product_id = %s,
         position = %s;"""
 
+    GETPRODUCTCATEGORYIDSSQL = """
+        SELECT category_id 
+        FROM catalog_category_product
+        WHERE product_id = %s;
+    """
+
+    DELETEPRODUCTCATEGORYSQL = """
+        DELETE FROM catalog_category_product
+        WHERE category_id = %s AND product_id = %s;
+    """
+
     UPDATECATEGORYCHILDRENCOUNTSQL = """
         UPDATE catalog_category_entity
         SET children_count = children_count + 1
@@ -1849,9 +1860,12 @@ class Mage2Connector(object):
         wait=wait_exponential(multiplier=1, max=60),
         stop=stop_after_attempt(5),
     )
-    def insert_update_categories(self, sku, data):
+    def insert_update_categories(self, sku, data, ignore_category_ids=[]):
         product_id = self.get_product_id_by_sku(sku)
-
+        if product_id == 0:
+            raise Exception(f"Product ({sku}) does not existed in Magento")
+        current_product_category_ids = self.get_product_category_ids(product_id)
+        synced_category_ids = []
         for row in data:
             store_id = row.pop("store_id", 0)
             delimeter = row.pop("delimeter", "/")
@@ -1887,10 +1901,14 @@ class Mage2Connector(object):
                                 self.set_product_category(
                                     product_id, category_id, position=position
                                 )
+                                if category_id is not None:
+                                    synced_category_ids.append(str(category_id))
                         elif level == len(categories):
                             self.set_product_category(
                                 product_id, category_id, position=position
                             )
+                            if category_id is not None:
+                                synced_category_ids.append(str(category_id))
 
                         current_path_ids.append(category_id)
                         parent_id = category_id
@@ -1901,7 +1919,36 @@ class Mage2Connector(object):
                     self.logger.exception(log)
                     self.adaptor.rollback()
                     raise
+        try:
+            delete_product_category_ids = list(set(current_product_category_ids).difference(set(synced_category_ids)))
+            delete_product_category_ids = list(set(delete_product_category_ids).difference(set(ignore_category_ids)))
+            if len(delete_product_category_ids) > 0:
+                self.logger.info("remove_category_ids: {remove_ids}".format(remove_ids=",".join(delete_product_category_ids)))
+                for delete_product_category_id in delete_product_category_ids:
+                    self.delete_product_category(product_id, delete_product_category_id)
+                self.adaptor.commit()
+        except Exception:
+            log = traceback.format_exc()
+            self.logger.exception(log)
+            self.adaptor.rollback()
+            raise
         return product_id
+
+    def get_product_category_ids(self, product_id):
+        self.adaptor.mysql_cursor.execute(
+            self.GETPRODUCTCATEGORYIDSSQL,
+            [product_id]
+        )
+        rows = self.adaptor.mysql_cursor.fetchall()
+        return [
+            str(row["category_id"])
+            for row in rows
+        ]
+    
+    def delete_product_category(self, product_id, category_id):
+        self.adaptor.mysql_cursor.execute(
+            self.DELETEPRODUCTCATEGORYSQL, [category_id, product_id]
+        )
 
     ## Insert Update Imagegallery.
     def insert_update_imagegallery(self, sku, data):
