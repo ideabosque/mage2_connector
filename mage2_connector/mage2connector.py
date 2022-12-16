@@ -100,6 +100,12 @@ class Mage2Connector(object):
         AND t2.value = %s
         AND t2.store_id = %s;"""
 
+    GETOPTIONVALUESQL = """
+        SELECT value
+        FROM eav_attribute_option_value
+        WHERE option_id = %s
+        AND store_id = %s;"""
+
     INSERTCATALOGPRODUCTENTITYEESQL = """
         INSERT INTO catalog_product_entity
         (entity_id, created_in, updated_in, attribute_set_id, type_id, sku, has_options, required_options, created_at, updated_at)
@@ -617,6 +623,12 @@ class Mage2Connector(object):
         SELECT *
         FROM inventory_source_item
         WHERE source_code = %s AND sku = %s
+    """
+
+    GETENTITYATTRIBUTEVALUESQL = """
+        SELECT * 
+        FROM {entity_type_code}_entity_{data_type} 
+        WHERE {id_field} = %s AND attribute_id = %s AND store_id = %s;
     """
 
     def __init__(self, logger, **setting):
@@ -2139,6 +2151,59 @@ class Mage2Connector(object):
             self.adaptor.mysql_cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
         return product_id
 
+    def get_entity_attribute_value(self, entity_type_code, entity_id, attribute_code, store_id=0):
+        try:
+            (data_type, attribute_metadata) = self.get_attribute_metadata(attribute_code, entity_type_code)
+        except Exception as e:
+            return None
+        attribute_id = attribute_metadata["attribute_id"]
+        if data_type != "static":
+            if (
+                entity_type_code == "catalog_product"
+                or entity_type_code == "catalog_category"
+            ):
+                id_field = "entity_id"
+                if self.setting["VERSION"] == "EE":
+                    id_field = "row_id"
+            else:
+                id_field = "entity_id"
+            sql = self.GETENTITYATTRIBUTEVALUESQL.format(
+                entity_type_code=entity_type_code, data_type=data_type, id_field=id_field
+            )
+            self.adaptor.mysql_cursor.execute(sql, [entity_id, attribute_id, store_id])
+            res =self.adaptor.mysql_cursor.fetchone()
+            if not res:
+                return None
+            value = res["value"]
+            if attribute_metadata["frontend_input"] == "select":
+                option_id = value
+                value = self.get_option_value(option_id, store_id)
+            elif attribute_metadata["frontend_input"] == "multiselect":
+                option_ids = []
+                if value:
+                    option_ids = value.split(",")
+                    multi_values = []
+                    for option_id in option_ids:
+                        line_value = self.get_option_value(option_id, store_id)
+                        if line_value:
+                            multi_values.append(line_value)
+                    value = multi_values
+            return value
+        else:
+            return None
+        
+    def get_option_value(self, option_id, store_id):
+        self.adaptor.mysql_cursor.execute(
+            self.GETOPTIONVALUESQL,
+            [option_id, store_id]
+        )
+        res =self.adaptor.mysql_cursor.fetchone()
+        value = None
+        if res is not None:
+            value = res["value"]
+        return value
+
+
 class Mage2OrderConnector(object):
 
     STATE_NEW = "new"
@@ -2153,7 +2218,7 @@ class Mage2OrderConnector(object):
     GETORDERBYINCREMENTIDSQL = """
         SELECT *
         FROM sales_order
-        WHERE increment_id = %s
+        WHERE increment_id = %s;
     """
 
     UPDATEORDERSTATUSANDSTATESQL = """
@@ -2237,10 +2302,10 @@ class Mage2OrderConnector(object):
     def ship_order(self, order_id, items=[], notify=False, append_comment=False, comment=None, is_visible_on_front=False, tracks=[], packages=[], arguments=None):
         
         payload = {
-            "items": [],
+            "items": items,
             "notify": notify,
             "appendComment": append_comment,
-            "comment": {"comment": comment, "isVisibleOnFront": is_visible_on_front} if comment is not None else None,
+            "comment": {"comment": comment, "isVisibleOnFront": 1 if is_visible_on_front else 0} if comment is not None else None,
             "tracks": tracks
         }
         api_path = "order/{order_id}/ship".format(order_id=order_id)
@@ -2252,14 +2317,14 @@ class Mage2OrderConnector(object):
             "notify": notify,
             "capture": capture,
             "appendComment": append_comment,
-            "comment": {"comment": comment, "isVisibleOnFront": is_visible_on_front} if comment is not None else None
+            "comment": {"comment": comment, "isVisibleOnFront":1 if is_visible_on_front else 0} if comment is not None else None
         }
         api_path = "order/{order_id}/invoice".format(order_id=order_id)
         return self.request_magento_rest_api(api_path=api_path, method="POST", payload=payload)
     
     def insert_order_comment(self, order_id, comment, status, allow_duplicate_comment=False, is_customer_notified=0, is_visible_on_front=0, entity_name="order"):
         can_add_comment = True
-        if allow_duplicate_comment:
+        if not allow_duplicate_comment:
             order_comments = self.get_order_comment_list(order_id)
             for order_comment in order_comments:
                 if order_comment["comment"] == comment:
@@ -2385,7 +2450,34 @@ class Mage2OrderConnector(object):
             ):
                 return True
         return False
-        
+
+    def can_ship_order_items(self, order, order_item_ids=[]):
+        order_state = order.get("state")
+        is_virtual = order.get("is_virtual")
+        if self.can_unhold_order(order_state) or self.is_order_payment_review(order_state):
+            return False
+        if self.is_order_canceled(order_state) or is_virtual:
+            return False
+        order_items = self.get_order_items(order.get("entity_id"))
+        format_items = self.format_order_items(order_items)
+        can_ship_items = True
+        for format_order_item in format_items:
+            if len(order_item_ids) > 0 and (format_order_item.get("item_id") not in order_item_ids and format_order_item.get("parent_item_id") not in order_item_ids):
+                continue
+            if self.is_dummy_order_item(format_order_item, True):
+                continue
+            qty_to_ship = format_order_item.get("qty_ordered", 0) - max([format_order_item.get("qty_shipped", 0), format_order_item.get("qty_refunded", 0), format_order_item.get("qty_canceled", 0)])
+            if (
+                qty_to_ship > 0
+                and not format_order_item.get("is_virtual") 
+                and not format_order_item.get("locked_do_ship") 
+                and not (format_order_item.get("qty_refunded") == format_order_item.get("qty_ordered"))
+            ):
+                continue
+            else:
+                can_ship_items = False
+        return can_ship_items
+
     def can_invoice_order(self, order):
         order_state = order.get("state")
         if self.can_unhold_order(order_state) or self.is_order_payment_review(order_state):
@@ -2405,6 +2497,31 @@ class Mage2OrderConnector(object):
             ):
                 return True
         return False
+
+    def can_invoice_order_items(self, order, order_item_ids=[]):
+        order_state = order.get("state")
+        if self.can_unhold_order(order_state) or self.is_order_payment_review(order_state):
+            return False
+        if self.is_order_canceled(order_state) or order_state == self.STATE_COMPLETE or order_state == self.STATE_CLOSED:
+            return False
+
+        order_items = self.get_order_items(order.get("entity_id"))
+        format_items = self.format_order_items(order_items)
+        can_invoice_items = True
+        for format_order_item in format_items:
+            if len(order_item_ids) > 0 and (format_order_item.get("item_id") not in order_item_ids and format_order_item.get("parent_item_id") not in order_item_ids):
+                continue
+            if self.is_dummy_order_item(format_order_item):
+                continue
+            qty_to_invoice = format_order_item.get("qty_ordered", 0) - format_order_item.get("qty_invoiced", 0) -format_order_item.get("qty_canceled", 0)
+            if (
+                qty_to_invoice > 0
+                and not format_order_item.get("locked_do_invoice")
+            ):
+                continue
+            else:
+                can_invoice_items = False
+        return can_invoice_items
 
     def update_order_state_status(self, order_id, state, status):
         self.adaptor.mysql_cursor.execute(
