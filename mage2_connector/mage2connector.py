@@ -535,8 +535,8 @@ class Mage2Connector(object):
         use_config_manage_stock = %s,
         qty_increments = %s,
         use_config_qty_increments = %s
-        WHERE website_id = %s
-        AND product_id = %s
+        WHERE product_id = %s
+        AND website_id = %s
         AND stock_id = %s
     """
 
