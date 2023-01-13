@@ -1009,18 +1009,11 @@ class Mage2Connector(object):
         )
 
         if current_stock_item:
-            stock_item = {}
-            for field, value in current_stock_item.items():
-                if stock_data.get(field, None) is None:
-                    stock_item[field] = value
-                else:
-                    stock_item[field] = stock_data.get(field)
-
             self.update_cataloginventory_stock_item(
                 product_id=product_id,
                 website_id=website_id,
                 stock_id=stock_id,
-                stock_data=stock_item,
+                stock_data=stock_data,
             )
         else:
             self.insert_cataloginventory_stock_item(
@@ -1052,11 +1045,8 @@ class Mage2Connector(object):
                     1 if stock_data.get("min_sale_qty", None) is None else 0,
                 ),
                 stock_data.get("manage_stock", 0),
-                stock_data.get(
-                    "use_config_manage_stock",
-                    1 if stock_data.get("manage_stock", None) is None else 0,
-                ),
-                stock_data.get("qty_increments", 0),
+                stock_data.get("use_config_manage_stock", 0),
+                stock_data.get("qty_increments", 1),
                 stock_data.get(
                     "use_config_qty_increments",
                     1 if stock_data.get("qty_increments", None) is None else 0,
@@ -1092,11 +1082,8 @@ class Mage2Connector(object):
                     1 if stock_data.get("min_sale_qty", None) is None else 0,
                 ),
                 stock_data.get("manage_stock", 0),
-                stock_data.get(
-                    "use_config_manage_stock",
-                    1 if stock_data.get("manage_stock", None) is None else 0,
-                ),
-                stock_data.get("qty_increments", 0),
+                stock_data.get("use_config_manage_stock", 0),
+                stock_data.get("qty_increments", 1),
                 stock_data.get(
                     "use_config_qty_increments",
                     1 if stock_data.get("qty_increments", None) is None else 0,
