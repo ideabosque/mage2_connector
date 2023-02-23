@@ -522,8 +522,8 @@ class Mage2Connector(object):
 
     INSERTCATALOGINVENTORYSTOCKITEM = """
         INSERT INTO cataloginventory_stock_item
-        (product_id, website_id, stock_id, is_qty_decimal, min_sale_qty, use_config_min_sale_qty, manage_stock, use_config_manage_stock, qty_increments, use_config_qty_increments)
-        VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        (product_id, website_id, stock_id, is_qty_decimal, min_sale_qty, use_config_min_sale_qty, manage_stock, use_config_manage_stock, qty_increments, use_config_qty_increments, is_in_stock)
+        VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
 
     UPDATECATALOGINVENTORYSTOCKITEM = """
@@ -534,7 +534,8 @@ class Mage2Connector(object):
         manage_stock = %s,
         use_config_manage_stock = %s,
         qty_increments = %s,
-        use_config_qty_increments = %s
+        use_config_qty_increments = %s,
+        is_in_stock = %s
         WHERE product_id = %s
         AND website_id = %s
         AND stock_id = %s
@@ -1063,6 +1064,7 @@ class Mage2Connector(object):
                     "use_config_qty_increments",
                     1 if stock_data.get("qty_increments", None) is None else 0,
                 ),
+                stock_data.get("is_in_stock", 1)
             ],
         )
 
@@ -1100,6 +1102,7 @@ class Mage2Connector(object):
                     "use_config_qty_increments",
                     1 if stock_data.get("qty_increments", None) is None else 0,
                 ),
+                stock_data.get("is_in_stock", 1),
                 product_id,
                 website_id,
                 stock_id,
