@@ -124,7 +124,7 @@ class Mage2Connector(object):
         WHERE {key} = %s;"""
 
     INSERTEAVATTRIBUTEOPTIONSQL = (
-        """INSERT INTO eav_attribute_option (attribute_id) VALUES (%s);"""
+        """INSERT INTO eav_attribute_option (attribute_id, group_id) VALUES (%s, %s);"""
     )
 
     OPTIONVALUEEXISTSQL = """
@@ -749,7 +749,7 @@ class Mage2Connector(object):
         )
         if option_id is None:
             self.adaptor.mysql_cursor.execute(
-                self.INSERTEAVATTRIBUTEOPTIONSQL, [attribute_id]
+                self.INSERTEAVATTRIBUTEOPTIONSQL, [attribute_id, 0]
             )
             option_id = self.adaptor.mysql_cursor.lastrowid
         for (store_id, option_value) in options.items():
