@@ -2218,6 +2218,12 @@ class Mage2OrderConnector(object):
         WHERE entity_id = %s;
     """
 
+    UPDATEORDERGRIDSTATUSANDSTATESQL = """
+        UPDATE sales_order_grid
+        SET status = %s
+        WHERE entity_id = %s;
+    """
+
     GETORDERCOMMENTLISTSQL = """
         SELECT *
         FROM sales_order_status_history
@@ -2536,6 +2542,13 @@ class Mage2OrderConnector(object):
             self.UPDATEORDERSTATUSANDSTATESQL,
             [
                state,
+               status,
+               order_id
+            ],
+        )
+        self.adaptor.mysql_cursor.execute(
+            self.UPDATEORDERGRIDSTATUSANDSTATESQL,
+            [
                status,
                order_id
             ],
