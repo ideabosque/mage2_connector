@@ -2236,7 +2236,16 @@ class Mage2OrderConnector(object):
         WHERE order_id = %s
     """
     
+    GETORDERSTATUSSTATESQL = """
+        SELECT *
+        FROM sales_order_status_state
+    """
 
+    CANCELORDERITEMBYIDSQL = """
+        UPDATE sales_order_item
+        SET qty_canceled = qty_ordered
+        WHERE item_id = %s
+    """
     def __init__(self, logger, **setting):
         self.logger = logger
         self.setting = setting
@@ -2513,6 +2522,15 @@ class Mage2OrderConnector(object):
                 can_invoice_items = False
         return can_invoice_items
 
+    def cancel_order_items(self, order, order_item_ids=[]):
+        if len(order_item_ids) > 0:
+            for order_item_id in order_item_ids:
+                self.adaptor.mysql_cursor.execute(
+                    self.CANCELORDERITEMBYIDSQL,
+                    [order_item_id],
+                )
+            self.adaptor.commit()
+
     def update_order_state_status(self, order_id, state, status):
         self.adaptor.mysql_cursor.execute(
             self.UPDATEORDERSTATUSANDSTATESQL,
@@ -2523,6 +2541,14 @@ class Mage2OrderConnector(object):
             ],
         )
         self.adaptor.commit()
+    
+    def get_order_status_state(self):
+        self.adaptor.mysql_cursor.execute(
+            self.GETORDERSTATUSSTATESQL,
+            []
+        )
+        rows = self.adaptor.mysql_cursor.fetchall()
+        return rows
     
     def can_unhold_order(self, order_state):
         if self.is_order_payment_review(order_state):
