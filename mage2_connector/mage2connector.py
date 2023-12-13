@@ -976,6 +976,11 @@ class Mage2Connector(object):
                 product_id = self.insert_catalog_product_entity(
                     sku, attribute_set, type_id
                 )
+                attributes_default_value = self.setting.get("attributes_default_value", {})
+                if len(attributes_default_value) > 0:
+                    for attribute_code, default_value in attributes_default_value.items():
+                        if attribute_code not in data:
+                            data[attribute_code] = default_value
             else:
                 self.update_catalog_product_entity(product_id, attribute_set, type_id)
 
