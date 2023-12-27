@@ -673,8 +673,9 @@ class Mage2Connector(object):
         if response.status_code == 200:
             return response.content
         else:
-            self.logger.error(response.content)
-            raise Exception(response.content)
+            # self.logger.error(response.content)
+            response_error = json.loads(response.content)
+            raise Exception(response_error.get("message"))
 
     def get_entity_metadata(
         self, entity_type_code="catalog_product", attribute_set="Default"
@@ -2298,8 +2299,9 @@ class Mage2OrderConnector(object):
         if response.status_code == 200:
             return response.content
         else:
-            self.logger.error(response.content)
-            raise Exception(response.content)
+            # self.logger.error(response.content)
+            response_error = json.loads(response.content)
+            raise Exception(response_error.get("message"))
 
     def get_order_by_increment_id(self, increment_id):
         self.adaptor.mysql_cursor.execute(
