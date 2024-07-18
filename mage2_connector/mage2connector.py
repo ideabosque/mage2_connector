@@ -2258,6 +2258,19 @@ class Mage2OrderConnector(object):
         SET qty_canceled = qty_ordered
         WHERE item_id = %s
     """
+
+    UPDATESHIPMENTCREATEDATSQL = """
+        UPDATE sales_shipment
+        SET created_at = %s
+        WHERE entity_id = %s
+    """
+
+    UPDATESHIPMENTGRIDCREATEDATSQL = """
+        UPDATE sales_shipment_grid
+        SET created_at = %s
+        WHERE entity_id = %s
+    """
+
     def __init__(self, logger, **setting):
         self.logger = logger
         self.setting = setting
@@ -2311,7 +2324,7 @@ class Mage2OrderConnector(object):
         res = self.adaptor.mysql_cursor.fetchone()
         return res
 
-    def ship_order(self, order_id, items=[], notify=False, append_comment=False, comment=None, is_visible_on_front=False, tracks=[], packages=[], arguments=None):
+    def ship_order(self, order_id, items=[], notify=False, append_comment=False, comment=None, is_visible_on_front=False, tracks=[], packages=[], arguments=None, ship_date=None):
         
         payload = {
             "items": items,
@@ -2321,7 +2334,31 @@ class Mage2OrderConnector(object):
             "tracks": tracks
         }
         api_path = "order/{order_id}/ship".format(order_id=order_id)
-        return self.request_magento_rest_api(api_path=api_path, method="POST", payload=payload)
+        res = self.request_magento_rest_api(api_path=api_path, method="POST", payload=payload)
+        try:
+            shipment_id = json.loads(res)
+            if ship_date is not None and shipment_id is not None:
+                self.adaptor.mysql_cursor.execute(
+                    self.UPDATESHIPMENTCREATEDATSQL,
+                    [
+                        ship_date,
+                        shipment_id
+                    
+                    ],
+                )
+                self.adaptor.mysql_cursor.execute(
+                    self.UPDATESHIPMENTGRIDCREATEDATSQL,
+                    [
+                    ship_date,
+                    shipment_id
+                    ],
+                )
+                self.adaptor.commit()
+        except Exception as e:
+            log = traceback.format_exc()
+            self.logger.exception(log)
+            pass
+        return res
 
     def invoice_order(self, order_id, capture=False, items=[], notify=False, append_comment=False, comment=None, is_visible_on_front=False, arguments=None):
         payload = {
