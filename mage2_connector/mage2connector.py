@@ -522,8 +522,8 @@ class Mage2Connector(object):
 
     INSERTCATALOGINVENTORYSTOCKITEM = """
         INSERT INTO cataloginventory_stock_item
-        (product_id, website_id, stock_id, is_qty_decimal, min_sale_qty, use_config_min_sale_qty, manage_stock, use_config_manage_stock, qty_increments, use_config_qty_increments, is_in_stock)
-        VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        (product_id, website_id, stock_id, is_qty_decimal, min_sale_qty, use_config_min_sale_qty, max_sale_qty, use_config_max_sale_qty, manage_stock, use_config_manage_stock, qty_increments, use_config_qty_increments, is_in_stock)
+        VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
 
     UPDATECATALOGINVENTORYSTOCKITEM = """
@@ -531,6 +531,8 @@ class Mage2Connector(object):
         SET is_qty_decimal  = %s,
         min_sale_qty = %s,
         use_config_min_sale_qty = %s,
+        max_sale_qty = %s,
+        use_config_max_sale_qty = %s,
         manage_stock = %s,
         use_config_manage_stock = %s,
         qty_increments = %s,
@@ -1063,6 +1065,11 @@ class Mage2Connector(object):
                     "use_config_min_sale_qty",
                     1 if stock_data.get("min_sale_qty", None) is None else 0,
                 ),
+                stock_data.get("max_sale_qty", 0),
+                stock_data.get(
+                    "use_config_max_sale_qty",
+                    1 if stock_data.get("max_sale_qty", None) is None else 0,
+                ),
                 stock_data.get("manage_stock", 0),
                 stock_data.get("use_config_manage_stock", 0),
                 stock_data.get("qty_increments", 1),
@@ -1100,6 +1107,11 @@ class Mage2Connector(object):
                 stock_data.get(
                     "use_config_min_sale_qty",
                     1 if stock_data.get("min_sale_qty", None) is None else 0,
+                ),
+                stock_data.get("max_sale_qty", 0),
+                stock_data.get(
+                    "use_config_max_sale_qty",
+                    1 if stock_data.get("max_sale_qty", None) is None else 0,
                 ),
                 stock_data.get("manage_stock", 0),
                 stock_data.get("use_config_manage_stock", 0),
