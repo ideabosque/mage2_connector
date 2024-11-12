@@ -741,8 +741,6 @@ class Mage2Connector(object):
             entity_type_code=entity_type_code, data_type=data_type, cols=cols, vls=vls
         )
         self.adaptor.mysql_cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
-        self.logger.info(sql)
-        self.logger.info(param)
         self.adaptor.mysql_cursor.execute(sql, param)
         self.adaptor.mysql_cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
 
